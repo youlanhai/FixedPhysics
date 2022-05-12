@@ -64,7 +64,17 @@ struct FBVHQueryNode
 {
     FBVHNode *node;
     FBB bb;
-    FVector2 start, end;
+    FFloat distance;
+
+    FBVHQueryNode() = default;
+
+    FBVHQueryNode(FBVHNode *n, const FBB& b)
+        : node(n), bb(b)
+    {}
+
+    FBVHQueryNode(FBVHNode *n, FFloat d)
+        : node(n), distance(d)
+    {}
 };
 
 /** 层次包围盒树。是一颗满二叉树 */
@@ -153,7 +163,7 @@ bool FBVHTree::queryCollider(const FBB & bounds, T &visit)
     }
 
     stack.clear();
-    stack.push_back(FBVHQueryNode{ root, bounds });
+    stack.push_back(FBVHQueryNode(root, bounds));
 
     while (!stack.empty())
     {
@@ -179,55 +189,13 @@ bool FBVHTree::queryCollider(const FBB & bounds, T &visit)
             FBB tempBB = top.bb;
             tempBB.sub(node->bb);
 
-            stack.push_back(FBVHQueryNode{ node->left, tempBB });
-            stack.push_back(FBVHQueryNode{ node->right, tempBB });
+            stack.push_back(FBVHQueryNode(node->left, tempBB));
+            stack.push_back(FBVHQueryNode(node->right, tempBB));
         }
     }
     return false;
 }
 
-#if 0
-template<typename T>
-void FBVHTree::queryByRay(const FVector2 &start, const FVector2 &end, T &visit, int depth)
-{
-    FBB unused;
-
-    stack.clear();
-    stack.push_back(FBVHQueryNode{ root, unused, start, end });
-
-    while (!stack.empty())
-    {
-        FBVHQueryNode top = stack.back();
-        stack.pop_back();
-
-        FBVHNode *node = top.node;
-        if (node->isLeafNode())
-        {
-            if (visit(node))
-            {
-                return;
-            }
-        }
-        else
-        {
-            FVector2 s2 = top.start;
-            FVector2 e2 = top.end;
-            if (node->left->bb.clipLine(s2, e2))
-            {
-                stack.push_back(FBVHQueryNode{ node->left, unused, s2, e2 });
-            }
-
-            s2 = start;
-            e2 = end;
-            if (node->right->bb.clipLine(s2, e2))
-            {
-                stack.push_back(FBVHQueryNode{ node->right, unused, s2, e2 });
-            }
-        }
-    }
-}
-
-#else
 template<typename T>
 void FBVHTree::queryByRay(const FVector2 &start, const FVector2 &direction, FFloat distance, T &visit)
 {
@@ -236,50 +204,63 @@ void FBVHTree::queryByRay(const FVector2 &start, const FVector2 &direction, FFlo
         return;
     }
 
+    FBB unused;
+
+    stack.clear();
+    stack.push_back(FBVHQueryNode(root, distance));
+
     FVector2 end = start + direction * distance;
-    queryByRay2(root, distance, start, end, visit, 1);
-}
-#endif
+    FFloat minDistance = distance;
 
-template<typename T>
-void FBVHTree::queryByRay2(FBVHNode *node, FFloat &minDistance, const FVector2 &start, const FVector2 &end, T &visit, int depth)
-{
-#if 0
-    std::bitset<8> set(depth);
-    std::string str = set.to_string();
-    LOG_INFO("queryByRay2: %s, %d", str.c_str(), toi(minDistance));
-#endif
+    FBVHQueryNode top;
+    FBVHNode *node;
+    FFloat d1, d2;
 
-    if (node->isLeafNode())
+    while (!stack.empty())
     {
-        FFloat ret = visit(node);
-        minDistance = FMath::min(ret, minDistance);
-        return;
-    }
+        top = stack.back();
+        node = top.node;
+        stack.pop_back();
 
-    FFloat d1 = node->left->bb.getDistance(start, end);
-    FFloat d2 = node->right->bb.getDistance(start, end);
+        if (top.distance > minDistance)
+        {
+            continue;
+        }
 
-    if (d1 < d2)
-    {
-        if (d1 < minDistance)
+        if (node->isLeafNode())
         {
-            queryByRay2(node->left, minDistance, start, end, visit, depth << 1);
+            d1 = visit(node);
+            minDistance = FMath::min(d1, minDistance);
+            continue;
         }
-        if (d2 < minDistance)
+
+        // 如果结点和包围盒不相交，会返回FloatMax，必然会大于minDistance
+        d1 = node->left->bb.getDistance(start, end);
+        d2 = node->right->bb.getDistance(start, end);
+
+        if (d1 < d2)
         {
-            queryByRay2(node->right, minDistance, start, end, visit, depth << 1 | 1);
+            // 射线离左结点包围盒更近，优先检测左结点
+            if (d1 < minDistance)
+            {
+                stack.push_back(FBVHQueryNode(node->left, d1));
+            }
+            if (d2 < minDistance)
+            {
+                stack.push_back(FBVHQueryNode(node->right, d2));
+            }
         }
-    }
-    else
-    {
-        if (d2 < minDistance)
+        else
         {
-            queryByRay2(node->right, minDistance, start, end, visit, depth << 1 | 1);
-        }
-        if (d1 < minDistance)
-        {
-            queryByRay2(node->left, minDistance, start, end, visit, depth << 1);
+            // 射线离右结点包围盒更近，优先检测右结点
+            if (d2 < minDistance)
+            {
+                stack.push_back(FBVHQueryNode(node->right, d2));
+            }
+            if (d1 < minDistance)
+            {
+                stack.push_back(FBVHQueryNode(node->left, d1));
+            }
         }
     }
 }
